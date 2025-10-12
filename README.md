@@ -26,8 +26,9 @@ src/
 
 ## Getting started
 
-The project targets Python 3.11+. Install dependencies (there are none beyond
-the standard library) and run the CLI in one of the following modes.
+The project targets Python 3.11+. The command line interface only depends on
+the Python standard library—set the ``PYTHONPATH`` and run it in one of the
+following modes.
 
 ### Run the demo scenario
 
@@ -73,6 +74,22 @@ PYTHONPATH=src python -m main --data path/to/finance-data.json
 
 Accounts, budgets, and transactions are created in memory for the duration of
 that command and a summary is printed to standard output.
+
+## Web dashboard
+
+A lightweight Flask front end is available for exploring the service in the
+browser. It displays account balances, recent transactions, and budget
+utilisation while also providing forms to add new entries or load data from a
+JSON document.
+
+```bash
+pip install -r requirements.txt
+FLASK_APP=webapp:create_app FLASK_ENV=development flask run
+```
+
+The application starts with the same demo dataset used by the CLI. Use the
+"Load demo data" button in the navigation bar to reset the state at any time or
+upload your own JSON document from the dashboard.
 
 ## Extending the prototype
 

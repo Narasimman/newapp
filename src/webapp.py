@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict
 from datetime import date, datetime
 from typing import Any, Dict, Iterable, List
@@ -27,7 +28,12 @@ def create_app() -> Flask:
     """Application factory used by ``flask run``."""
 
     app = Flask(__name__, template_folder="templates", static_folder="static")
-    app.config.setdefault("SECRET_KEY", "dev-finance-dashboard")
+
+    secret_key = os.environ.get("SECRET_KEY")
+    if secret_key:
+        app.config["SECRET_KEY"] = secret_key
+    else:
+        app.config.setdefault("SECRET_KEY", "dev-finance-dashboard")
     app.config["FINANCE_SERVICE"] = service_from_payload(demo_payload())
 
     # ------------------------------------------------------------------

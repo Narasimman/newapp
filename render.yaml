@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: finance-app
+    env: docker
+    plan: starter
+    autoDeploy: true
+    region: oregon
+    healthCheckPath: /
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true

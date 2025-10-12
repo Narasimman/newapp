@@ -1,0 +1,55 @@
+body {
+  background-color: #f5f6fa;
+}
+
+.navbar .btn {
+  white-space: nowrap;
+}
+
+.card {
+  border: none;
+  border-radius: 1rem;
+}
+
+.card-title {
+  color: #1f2933;
+}
+
+.table code {
+  color: #6c757d;
+}
+
+.alerts {
+  position: sticky;
+  top: 1rem;
+  z-index: 1050;
+}
+
+.amount {
+  font-weight: 600;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.progress {
+  height: 0.75rem;
+  border-radius: 999px;
+  background-color: rgba(0, 0, 0, 0.075);
+}
+
+.progress-bar {
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+
+.badge.text-bg-light {
+  font-weight: 500;
+}
+
+@media (max-width: 991px) {
+  .navbar .btn {
+    padding-inline: 0.75rem;
+  }
+}

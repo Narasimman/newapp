@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block title %}Finance Dashboard{% endblock %}
+
+{% block content %}
+  <section class="mb-4">
+    <div class="row g-3">
+      <div class="col-lg-4">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <h2 class="card-title h5 mb-3">Total balance</h2>
+            <p class="display-6 fw-semibold text-primary mb-0">{{ total_balance|format_currency }} {{ default_currency }}</p>
+            <p class="text-muted mb-0">Across {{ accounts|length }} accounts</p>
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-8">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <h2 class="card-title h5 mb-3">Recent activity</h2>
+            {% if latest_transactions %}
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th scope="col">Date</th>
+                      <th scope="col">Description</th>
+                      <th scope="col">Account</th>
+                      <th scope="col" class="text-end">Amount</th>
+                      <th scope="col">Category</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for txn in latest_transactions %}
+                      <tr>
+                        <td>{{ txn.date|format_date }}</td>
+                        <td>{{ txn.description or '—' }}</td>
+                        <td><span class="badge text-bg-light border">{{ txn.account_id }}</span></td>
+                        <td class="text-end">
+                          <span class="amount {{ 'text-success' if txn.amount > 0 else 'text-danger' }}">
+                            {{ txn.amount|format_currency }}
+                          </span>
+                        </td>
+                        <td>{{ txn.category or '—' }}</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <p class="text-muted mb-0">Record a transaction to see recent activity.</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mb-4">
+    <div class="row g-3">
+      <div class="col-lg-7">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-3">
+              <h2 class="card-title h5 mb-0">Accounts</h2>
+            </div>
+            {% if accounts %}
+              <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th scope="col">Name</th>
+                      <th scope="col">Identifier</th>
+                      <th scope="col" class="text-end">Balance</th>
+                      <th scope="col" class="text-end">Initial balance</th>
+                      <th scope="col">Currency</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in accounts %}
+                      <tr>
+                        <td>{{ row.account.name }}</td>
+                        <td><code>{{ row.account.id }}</code></td>
+                        <td class="text-end fw-semibold">{{ row.balance|format_currency }}</td>
+                        <td class="text-end">{{ row.account.initial_balance|format_currency }}</td>
+                        <td>{{ row.account.currency }}</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <p class="text-muted mb-0">No accounts registered yet.</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-5">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <h2 class="card-title h5 mb-3">Budgets</h2>
+            {% if budgets %}
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th scope="col">Category</th>
+                      <th scope="col" class="text-end">Limit</th>
+                      <th scope="col" class="text-end">Spent</th>
+                      <th scope="col" class="text-end">Remaining</th>
+                      <th scope="col">Progress</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in budgets %}
+                      {% set summary = row.summary %}
+                      <tr class="{{ 'table-danger' if row.is_over else 'table-warning' if row.is_near_limit else '' }}">
+                        <td class="fw-semibold text-capitalize">{{ summary.name }}</td>
+                        <td class="text-end">{{ summary.limit|format_currency if summary.limit is not none else '—' }}</td>
+                        <td class="text-end">{{ summary.spent|format_currency }}</td>
+                        <td class="text-end">{{ summary.remaining|format_currency if summary.remaining is not none else '—' }}</td>
+                        <td>
+                          {% if row.percent is not none %}
+                            <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ row.percent }}">
+                              <div class="progress-bar {{ 'bg-danger' if row.is_over else 'bg-warning' if row.is_near_limit else 'bg-success' }}" style="width: {{ row.percent }}%">
+                                {{ row.percent|round }}%
+                              </div>
+                            </div>
+                          {% else %}
+                            <span class="text-muted">No limit</span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <p class="text-muted mb-0">Add a budget category to start tracking spending.</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mb-5">
+    <div class="row g-3">
+      <div class="col-xl-4">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <h2 class="card-title h5 mb-3">Add account</h2>
+            <form action="{{ url_for('create_account') }}" method="post" class="d-grid gap-3">
+              <div>
+                <label for="account-id" class="form-label">Account ID</label>
+                <input type="text" id="account-id" name="id" class="form-control" required placeholder="e.g. checking">
+              </div>
+              <div>
+                <label for="account-name" class="form-label">Name</label>
+                <input type="text" id="account-name" name="name" class="form-control" placeholder="Everyday Checking">
+              </div>
+              <div class="row g-2">
+                <div class="col-6">
+                  <label for="account-balance" class="form-label">Initial balance</label>
+                  <input type="number" step="0.01" id="account-balance" name="initial_balance" class="form-control" value="0">
+                </div>
+                <div class="col-6">
+                  <label for="account-currency" class="form-label">Currency</label>
+                  <input type="text" id="account-currency" name="currency" class="form-control" value="{{ default_currency }}">
+                </div>
+              </div>
+              <button type="submit" class="btn btn-primary">Save account</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      <div class="col-xl-4">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <h2 class="card-title h5 mb-3">Record transaction</h2>
+            <form action="{{ url_for('create_transaction') }}" method="post" class="d-grid gap-3">
+              <div>
+                <label for="transaction-account" class="form-label">Account</label>
+                <select id="transaction-account" name="account_id" class="form-select" required>
+                  <option value="" disabled selected>Select account</option>
+                  {% for row in accounts %}
+                    <option value="{{ row.account.id }}">{{ row.account.name }} ({{ row.account.id }})</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div>
+                <label for="transaction-amount" class="form-label">Amount</label>
+                <input type="number" step="0.01" id="transaction-amount" name="amount" class="form-control" required placeholder="Use negative values for expenses">
+              </div>
+              <div>
+                <label for="transaction-date" class="form-label">Date</label>
+                <input type="date" id="transaction-date" name="date" class="form-control">
+              </div>
+              <div>
+                <label for="transaction-description" class="form-label">Description</label>
+                <input type="text" id="transaction-description" name="description" class="form-control" placeholder="Optional">
+              </div>
+              <div>
+                <label for="transaction-category" class="form-label">Category</label>
+                <input type="text" id="transaction-category" name="category" class="form-control" placeholder="Budget category">
+              </div>
+              <button type="submit" class="btn btn-primary">Add transaction</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      <div class="col-xl-4">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <h2 class="card-title h5 mb-3">Create budget</h2>
+            <form action="{{ url_for('create_budget') }}" method="post" class="d-grid gap-3">
+              <div>
+                <label for="budget-name" class="form-label">Name</label>
+                <input type="text" id="budget-name" name="name" class="form-control" required placeholder="groceries">
+              </div>
+              <div>
+                <label for="budget-limit" class="form-label">Monthly limit</label>
+                <input type="number" step="0.01" id="budget-limit" name="limit" class="form-control" placeholder="Leave empty for no limit">
+              </div>
+              <div>
+                <label for="budget-description" class="form-label">Description</label>
+                <textarea id="budget-description" name="description" class="form-control" rows="2" placeholder="Optional details"></textarea>
+              </div>
+              <div>
+                <label for="budget-tags" class="form-label">Tags</label>
+                <input type="text" id="budget-tags" name="tags" class="form-control" placeholder="Comma separated">
+              </div>
+              <button type="submit" class="btn btn-primary">Save budget</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mb-5">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h2 class="card-title h5 mb-3">Load data from JSON</h2>
+        <p class="text-muted">Upload a JSON document or paste its contents to replace the in-memory dataset. The expected format matches the structure used by the command line interface.</p>
+        <form action="{{ url_for('load_json') }}" method="post" enctype="multipart/form-data" class="row gy-3">
+          <div class="col-md-6">
+            <label for="data-file" class="form-label">Upload file</label>
+            <input class="form-control" type="file" id="data-file" name="data_file" accept="application/json">
+          </div>
+          <div class="col-md-6">
+            <label for="data-text" class="form-label">Or paste JSON</label>
+            <textarea id="data-text" name="data_text" class="form-control" rows="5" placeholder="{\n  &quot;accounts&quot;: []\n}"></textarea>
+          </div>
+          <div class="col-12">
+            <button type="submit" class="btn btn-primary">Load data</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+{% endblock %}

@@ -91,6 +91,38 @@ The application starts with the same demo dataset used by the CLI. Use the
 "Load demo data" button in the navigation bar to reset the state at any time or
 upload your own JSON document from the dashboard.
 
+## Container deployment
+
+Build a production-ready container image and run it with Gunicorn.
+
+```bash
+docker build -t finance-app .
+docker run -p 8000:8000 finance-app
+```
+
+The container exposes the web dashboard at http://localhost:8000.
+
+## Cloud deployment (Render)
+
+The repository includes a [Render Blueprint](https://render.com/docs/infrastructure-as-code) for
+deploying the containerised application to Render's managed infrastructure. The
+setup provisions a web service that continuously deploys from the default
+branch.
+
+1. Create a new Render account (or sign in) and ensure your GitHub repository is
+   connected.
+2. From the Render dashboard, choose **New + → Blueprint** and select this
+   repository.
+3. Render detects `render.yaml` and displays the resources that will be
+   created—review the plan and click **Apply**.
+4. On the first deployment Render automatically builds the Docker image using
+   the repository `Dockerfile`, generates a `SECRET_KEY`, and spins up the web
+   service.
+
+The resulting deployment exposes the dashboard at the service's assigned URL. A
+health check on `/` keeps the instance healthy, and subsequent pushes to the
+default branch trigger automatic redeployments.
+
 ## Extending the prototype
 
 The current implementation keeps everything in memory, which makes it suitable

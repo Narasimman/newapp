@@ -1,55 +1,141 @@
+/* ── Layout ─────────────────────────────────────────────── */
 body {
-  background-color: #f5f6fa;
+  background: #f4f6f9;
+  font-size: 0.9rem;
 }
 
-.navbar .btn {
+#main-nav {
+  background: #1a1f36;
+  border-bottom: 1px solid #2d3454;
+  min-height: 56px;
+}
+
+/* ── Summary cards ──────────────────────────────────────── */
+.summary-card {
+  border: none;
+  border-radius: 12px;
+  color: #fff;
+  position: relative;
+  overflow: hidden;
+}
+
+.summary-card::before {
+  content: '';
+  position: absolute;
+  top: -20px;
+  right: -20px;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  opacity: 0.15;
+  background: #fff;
+}
+
+.summary-card--blue   { background: linear-gradient(135deg, #3b82f6, #1d4ed8); }
+.summary-card--red    { background: linear-gradient(135deg, #ef4444, #b91c1c); }
+.summary-card--green  { background: linear-gradient(135deg, #22c55e, #15803d); }
+.summary-card--purple { background: linear-gradient(135deg, #a855f7, #7e22ce); }
+
+.summary-label {
+  font-size: 0.75rem;
+  opacity: 0.85;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.summary-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.1;
+  margin-bottom: 4px;
+}
+
+.summary-sub {
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+/* ── Cards ──────────────────────────────────────────────── */
+.card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.05);
+}
+
+.card-header {
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  border-radius: 12px 12px 0 0 !important;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+}
+
+/* ── Accounts list ──────────────────────────────────────── */
+.account-item {
+  border-left: 4px solid transparent;
+  transition: background 0.15s;
+}
+
+.account-item:hover { background: #f8fafc; }
+.account-item.active { border-left-color: #3b82f6; background: #eff6ff; }
+
+.account-type-badge {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e5e7eb;
+  color: #4b5563;
+}
+
+.account-balance {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+/* ── Transactions table ─────────────────────────────────── */
+.table > thead > tr > th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  font-weight: 600;
+  border-bottom-width: 1px;
+}
+
+.amount-debit  { color: #dc2626; font-weight: 500; }
+.amount-credit { color: #16a34a; font-weight: 500; }
+
+.pending-badge {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #92400e;
+  vertical-align: middle;
+}
+
+.category-pill {
+  font-size: 0.68rem;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: #f3f4f6;
+  color: #374151;
   white-space: nowrap;
 }
 
-.card {
-  border: none;
-  border-radius: 1rem;
+/* ── Toast notifications ────────────────────────────────── */
+.toast { min-width: 260px; }
+
+/* ── Spinner ────────────────────────────────────────────── */
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Chart containers ───────────────────────────────────── */
+#categoryChart, #monthlyChart {
+  max-height: 260px;
 }
 
-.card-title {
-  color: #1f2933;
-}
-
-.table code {
-  color: #6c757d;
-}
-
-.alerts {
-  position: sticky;
-  top: 1rem;
-  z-index: 1050;
-}
-
-.amount {
-  font-weight: 600;
-}
-
-textarea {
-  resize: vertical;
-}
-
-.progress {
-  height: 0.75rem;
-  border-radius: 999px;
-  background-color: rgba(0, 0, 0, 0.075);
-}
-
-.progress-bar {
-  border-radius: 999px;
-  font-size: 0.75rem;
-}
-
-.badge.text-bg-light {
-  font-weight: 500;
-}
-
-@media (max-width: 991px) {
-  .navbar .btn {
-    padding-inline: 0.75rem;
-  }
-}
+textarea { resize: vertical; }

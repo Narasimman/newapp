@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: finance-app
+    name: finance-tracker
     env: docker
     plan: starter
     autoDeploy: true
@@ -9,3 +9,9 @@ services:
     envVars:
       - key: SECRET_KEY
         generateValue: true
+      - key: PLAID_CLIENT_ID
+        sync: false
+      - key: PLAID_SECRET
+        sync: false
+      - key: PLAID_ENV
+        value: sandbox

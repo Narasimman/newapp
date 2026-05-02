@@ -1,313 +1,324 @@
-"""Flask application providing a simple front-end for the finance service."""
+"""Flask application for the Plaid-integrated personal finance tracker."""
 
 from __future__ import annotations
 
-import json
 import os
-from dataclasses import asdict
-from datetime import date, datetime
-from typing import Any, Dict, Iterable, List
-from uuid import uuid4
+from datetime import date, timedelta
 
-from flask import (
-    Flask,
-    Response,
-    flash,
-    redirect,
-    render_template,
-    request,
-    url_for,
-)
+from dotenv import load_dotenv
+from flask import Flask, jsonify, render_template, request
+from sqlalchemy import func
 
-from finance_app import Account, BudgetCategory, FinanceService, Transaction
-from finance_app.io import demo_payload, parse_date, service_from_payload
-from finance_app.services import AccountExistsError, UnknownAccountError
+from database import BankAccount, BankTransaction, PlaidItem, db
+from plaid_client import PlaidClient, PlaidError
+
+load_dotenv()
+
+
+def _sync_item(item: PlaidItem, plaid_client: PlaidClient) -> int:
+    added_txns, modified_txns, removed_ids, next_cursor = plaid_client.sync_transactions(
+        item.access_token, item.cursor
+    )
+
+    for txn in added_txns:
+        account = BankAccount.query.filter_by(plaid_account_id=txn["account_id"]).first()
+        if not account:
+            continue
+        if BankTransaction.query.filter_by(plaid_transaction_id=txn["transaction_id"]).first():
+            continue
+        db.session.add(
+            BankTransaction(
+                plaid_transaction_id=txn["transaction_id"],
+                account_id=account.id,
+                amount=txn["amount"],
+                date=txn["date"],
+                name=txn["name"],
+                merchant_name=txn["merchant_name"],
+                category=txn["category"],
+                pending=txn["pending"],
+            )
+        )
+
+    for txn in modified_txns:
+        existing = BankTransaction.query.filter_by(
+            plaid_transaction_id=txn["transaction_id"]
+        ).first()
+        if existing:
+            existing.amount = txn["amount"]
+            existing.name = txn["name"]
+            existing.merchant_name = txn["merchant_name"]
+            existing.category = txn["category"]
+            existing.pending = txn["pending"]
+
+    for txn_id in removed_ids:
+        existing = BankTransaction.query.filter_by(plaid_transaction_id=txn_id).first()
+        if existing:
+            db.session.delete(existing)
+
+    item.cursor = next_cursor
+
+    for acc_data in plaid_client.get_accounts(item.access_token):
+        acc = BankAccount.query.filter_by(plaid_account_id=acc_data["account_id"]).first()
+        if acc:
+            acc.current_balance = acc_data["balances"]["current"]
+            acc.available_balance = acc_data["balances"]["available"]
+
+    db.session.commit()
+    return len(added_txns)
 
 
 def create_app() -> Flask:
-    """Application factory used by ``flask run``."""
-
     app = Flask(__name__, template_folder="templates", static_folder="static")
 
-    secret_key = os.environ.get("SECRET_KEY")
-    if secret_key:
-        app.config["SECRET_KEY"] = secret_key
-    else:
-        app.config.setdefault("SECRET_KEY", "dev-finance-dashboard")
-    app.config["FINANCE_SERVICE"] = service_from_payload(demo_payload())
+    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-in-prod")
+    app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
+        "DATABASE_URL", "sqlite:///finance.db"
+    )
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-    # ------------------------------------------------------------------
-    # Template filters
-    # ------------------------------------------------------------------
-    @app.template_filter("format_currency")
-    def format_currency(value: float | None) -> str:
-        if value is None:
-            return "—"
-        return f"{value:,.2f}"
+    db.init_app(app)
 
-    @app.template_filter("format_date")
-    def format_date(value: datetime | date | None) -> str:
-        if value is None:
-            return "—"
-        if isinstance(value, datetime):
-            return value.strftime("%Y-%m-%d")
-        return value.isoformat()
+    with app.app_context():
+        db.create_all()
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-    def _get_service() -> FinanceService:
-        return app.config["FINANCE_SERVICE"]
+    plaid_client_id = os.environ.get("PLAID_CLIENT_ID")
+    plaid_secret = os.environ.get("PLAID_SECRET")
+    plaid_env = os.environ.get("PLAID_ENV", "sandbox")
+    plaid = (
+        PlaidClient(plaid_client_id, plaid_secret, plaid_env)
+        if plaid_client_id and plaid_secret
+        else None
+    )
 
-    def _set_service(service: FinanceService) -> None:
-        app.config["FINANCE_SERVICE"] = service
+    # ------------------------------------------------------------------ #
+    # Pages                                                                #
+    # ------------------------------------------------------------------ #
 
-    def _serialise_transactions(transactions: Iterable[Transaction]) -> List[Dict[str, Any]]:
-        serialised: List[Dict[str, Any]] = []
-        for txn in transactions:
-            payload = asdict(txn)
-            if isinstance(txn.date, datetime):
-                payload["date"] = txn.date.date().isoformat()
-            elif isinstance(txn.date, date):
-                payload["date"] = txn.date.isoformat()
-            else:
-                payload["date"] = None
-            serialised.append(payload)
-        return serialised
-
-    def _sorted_transactions(transactions: Iterable[Transaction]) -> List[Transaction]:
-        return sorted(
-            transactions,
-            key=lambda txn: _transaction_timestamp(txn.date),
-            reverse=True,
-        )
-
-    def _transaction_timestamp(value: datetime | date | None) -> datetime:
-        if isinstance(value, datetime):
-            return value
-        if isinstance(value, date):
-            return datetime.combine(value, datetime.min.time())
-        return datetime.min
-
-    def _build_account_rows(service: FinanceService) -> List[Dict[str, Any]]:
-        rows: List[Dict[str, Any]] = []
-        for account in service.accounts():
-            transactions = _sorted_transactions(service.transactions(account.id))
-            rows.append(
-                {
-                    "account": account,
-                    "balance": service.compute_balance(account.id),
-                    "transactions": transactions,
-                }
-            )
-        return rows
-
-    def _build_budget_rows(service: FinanceService) -> List[Dict[str, Any]]:
-        rows: List[Dict[str, Any]] = []
-        for summary in service.budget_report():
-            limit = summary.limit
-            spent = summary.spent
-            percent = None
-            if limit is not None and limit > 0:
-                percent = min(100.0, max(0.0, (spent / limit) * 100))
-            rows.append(
-                {
-                    "summary": summary,
-                    "percent": percent,
-                    "is_over": summary.remaining is not None and summary.remaining < 0,
-                    "is_near_limit": percent is not None and not (summary.remaining is not None and summary.remaining < 0) and percent >= 80,
-                }
-            )
-        return rows
-
-    def _parse_tags(raw: str | None) -> List[str]:
-        if not raw:
-            return []
-        return [tag.strip() for tag in raw.split(",") if tag.strip()]
-
-    # ------------------------------------------------------------------
-    # Routes
-    # ------------------------------------------------------------------
     @app.get("/")
-    def dashboard() -> str:
-        service = _get_service()
-        account_rows = _build_account_rows(service)
-        budgets = _build_budget_rows(service)
-        latest_transactions = _sorted_transactions(service.transactions())[:10]
-        total_balance = sum(row["balance"] for row in account_rows)
-        currency = account_rows[0]["account"].currency if account_rows else "USD"
-
+    def index():
+        accounts = BankAccount.query.all()
         return render_template(
             "dashboard.html",
-            accounts=account_rows,
-            budgets=budgets,
-            latest_transactions=latest_transactions,
-            total_balance=total_balance,
-            default_currency=currency,
+            accounts=accounts,
+            plaid_configured=plaid is not None,
         )
 
-    @app.post("/accounts")
-    def create_account() -> Response:
-        service = _get_service()
-        form = request.form
-        account_id = form.get("id", "").strip()
-        if not account_id:
-            flash("Account ID is required.", "danger")
-            return redirect(url_for("dashboard"))
+    # ------------------------------------------------------------------ #
+    # Plaid Link                                                           #
+    # ------------------------------------------------------------------ #
 
-        name = form.get("name", "").strip() or account_id
+    @app.post("/api/create-link-token")
+    def create_link_token():
+        if not plaid:
+            return jsonify({"error": "Plaid not configured"}), 503
         try:
-            initial_balance = float(form.get("initial_balance", 0) or 0)
-        except ValueError:
-            flash("Initial balance must be a number.", "danger")
-            return redirect(url_for("dashboard"))
+            return jsonify({"link_token": plaid.create_link_token()})
+        except PlaidError as exc:
+            return jsonify({"error": str(exc)}), 400
 
-        currency = form.get("currency", "USD").strip().upper() or "USD"
+    @app.post("/api/exchange-token")
+    def exchange_token():
+        if not plaid:
+            return jsonify({"error": "Plaid not configured"}), 503
+
+        data = request.get_json(force=True)
+        public_token = data.get("public_token")
+        metadata = data.get("metadata", {})
+        if not public_token:
+            return jsonify({"error": "Missing public_token"}), 400
 
         try:
-            service.add_account(
-                Account(
-                    id=account_id,
-                    name=name,
-                    initial_balance=initial_balance,
-                    currency=currency,
+            access_token, item_id = plaid.exchange_public_token(public_token)
+        except PlaidError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        if PlaidItem.query.filter_by(item_id=item_id).first():
+            return jsonify({"error": "Account already connected"}), 409
+
+        institution = metadata.get("institution", {})
+        item = PlaidItem(
+            item_id=item_id,
+            access_token=access_token,
+            institution_name=institution.get("name", "Unknown Bank"),
+            institution_id=institution.get("institution_id"),
+        )
+        db.session.add(item)
+        db.session.flush()
+
+        for acc_data in plaid.get_accounts(access_token):
+            db.session.add(
+                BankAccount(
+                    plaid_account_id=acc_data["account_id"],
+                    item_id=item.id,
+                    name=acc_data["name"],
+                    official_name=acc_data["official_name"],
+                    account_type=acc_data["type"],
+                    subtype=acc_data["subtype"],
+                    current_balance=acc_data["balances"]["current"],
+                    available_balance=acc_data["balances"]["available"],
+                    currency=acc_data["balances"]["iso_currency_code"],
                 )
             )
-        except AccountExistsError:
-            flash(f"Account with id '{account_id}' already exists.", "danger")
-        else:
-            flash(f"Account '{name}' created successfully.", "success")
-        return redirect(url_for("dashboard"))
 
-    @app.post("/transactions")
-    def create_transaction() -> Response:
-        service = _get_service()
-        form = request.form
-
-        account_id = form.get("account_id", "").strip()
-        if not account_id:
-            flash("Please select an account for the transaction.", "danger")
-            return redirect(url_for("dashboard"))
-
-        transaction_id = form.get("id", "").strip() or f"tx-{uuid4().hex[:8]}"
+        db.session.commit()
 
         try:
-            amount = float(form.get("amount", 0))
-        except ValueError:
-            flash("Transaction amount must be numeric.", "danger")
-            return redirect(url_for("dashboard"))
+            added = _sync_item(item, plaid)
+        except PlaidError:
+            added = 0
 
-        description = form.get("description", "").strip()
-        category = form.get("category", "").strip() or None
-        date_value = form.get("date", "").strip() or None
-
-        try:
-            parsed_date = parse_date(date_value).date() if date_value else None
-        except ValueError as exc:
-            flash(str(exc), "danger")
-            return redirect(url_for("dashboard"))
-
-        transaction = Transaction(
-            id=transaction_id,
-            account_id=account_id,
-            amount=amount,
-            description=description,
-            category=category,
-            date=parsed_date,
+        return jsonify(
+            {
+                "status": "ok",
+                "institution": item.institution_name,
+                "transactions_added": added,
+            }
         )
 
-        try:
-            service.record_transaction(transaction)
-        except UnknownAccountError:
-            flash("The selected account does not exist.", "danger")
-        else:
-            flash("Transaction recorded.", "success")
-        return redirect(url_for("dashboard"))
+    # ------------------------------------------------------------------ #
+    # Sync                                                                 #
+    # ------------------------------------------------------------------ #
 
-    @app.post("/budgets")
-    def create_budget() -> Response:
-        service = _get_service()
-        form = request.form
+    @app.post("/api/sync")
+    def sync_all():
+        if not plaid:
+            return jsonify({"error": "Plaid not configured"}), 503
 
-        name = form.get("name", "").strip()
-        if not name:
-            flash("Budget name is required.", "danger")
-            return redirect(url_for("dashboard"))
-
-        limit_raw = form.get("limit", "").strip()
-        try:
-            limit = float(limit_raw) if limit_raw else None
-        except ValueError:
-            flash("Budget limit must be numeric.", "danger")
-            return redirect(url_for("dashboard"))
-
-        description = form.get("description", "").strip()
-        tags = _parse_tags(form.get("tags"))
-
-        service.add_budget_category(
-            BudgetCategory(name=name, limit=limit, description=description, tags=tags)
-        )
-        flash("Budget saved.", "success")
-        return redirect(url_for("dashboard"))
-
-    @app.post("/load-json")
-    def load_json() -> Response:
-        file = request.files.get("data_file")
-        text = request.form.get("data_text", "").strip()
-
-        payload: Dict[str, Any] | None = None
-        if file and file.filename:
+        total_added = 0
+        errors = []
+        for item in PlaidItem.query.all():
             try:
-                payload = json.load(file)
-            except json.JSONDecodeError:
-                flash("Uploaded file is not valid JSON.", "danger")
-                return redirect(url_for("dashboard"))
-        elif text:
-            try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                flash("Provided JSON text is invalid.", "danger")
-                return redirect(url_for("dashboard"))
-        else:
-            flash("Please select a file or paste JSON data.", "warning")
-            return redirect(url_for("dashboard"))
+                total_added += _sync_item(item, plaid)
+            except PlaidError as exc:
+                errors.append({"institution": item.institution_name, "error": str(exc)})
 
-        try:
-            service = service_from_payload(payload)
-        except (KeyError, TypeError, ValueError) as exc:
-            flash(f"Unable to load data: {exc}", "danger")
-            return redirect(url_for("dashboard"))
+        return jsonify({"status": "ok", "added": total_added, "errors": errors})
 
-        _set_service(service)
-        flash("Finance data loaded successfully.", "success")
-        return redirect(url_for("dashboard"))
+    # ------------------------------------------------------------------ #
+    # Data endpoints                                                       #
+    # ------------------------------------------------------------------ #
 
-    @app.post("/reset-demo")
-    def reset_demo() -> Response:
-        _set_service(service_from_payload(demo_payload()))
-        flash("Demo dataset restored.", "success")
-        return redirect(url_for("dashboard"))
-
-    @app.get("/export")
-    def export_data() -> Response:
-        service = _get_service()
-        payload = {
-            "accounts": [asdict(account) for account in service.accounts()],
-            "budgets": [asdict(budget) for budget in service.budget_categories()],
-            "transactions": _serialise_transactions(service.transactions()),
-        }
-        return app.response_class(
-            json.dumps(payload, indent=2),
-            mimetype="application/json",
-            headers={"Content-Disposition": "attachment; filename=finance-data.json"},
+    @app.get("/api/accounts")
+    def get_accounts():
+        accounts = BankAccount.query.all()
+        return jsonify(
+            [
+                {
+                    "id": a.id,
+                    "name": a.name,
+                    "official_name": a.official_name,
+                    "type": a.account_type,
+                    "subtype": a.subtype,
+                    "current_balance": a.current_balance,
+                    "available_balance": a.available_balance,
+                    "currency": a.currency,
+                    "institution": a.item.institution_name,
+                    "item_id": a.item.id,
+                }
+                for a in accounts
+            ]
         )
+
+    @app.get("/api/transactions")
+    def get_transactions():
+        limit = request.args.get("limit", 50, type=int)
+        offset = request.args.get("offset", 0, type=int)
+        account_id = request.args.get("account_id", type=int)
+        days = request.args.get("days", type=int)
+
+        query = BankTransaction.query
+        if account_id:
+            query = query.filter_by(account_id=account_id)
+        if days:
+            cutoff = date.today() - timedelta(days=days)
+            query = query.filter(BankTransaction.date >= cutoff)
+
+        total = query.count()
+        txns = (
+            query.order_by(BankTransaction.date.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        return jsonify(
+            {
+                "total": total,
+                "transactions": [
+                    {
+                        "id": t.id,
+                        "date": t.date.isoformat(),
+                        "name": t.name,
+                        "merchant_name": t.merchant_name,
+                        "amount": t.amount,
+                        "category": t.category,
+                        "pending": t.pending,
+                        "account_id": t.account_id,
+                        "account_name": t.account.name,
+                    }
+                    for t in txns
+                ],
+            }
+        )
+
+    @app.get("/api/spending-summary")
+    def spending_summary():
+        days = request.args.get("days", 30, type=int)
+        cutoff = date.today() - timedelta(days=days)
+
+        category_rows = (
+            db.session.query(
+                BankTransaction.category,
+                func.sum(BankTransaction.amount).label("total"),
+            )
+            .filter(
+                BankTransaction.date >= cutoff,
+                BankTransaction.amount > 0,
+                BankTransaction.pending == False,  # noqa: E712
+            )
+            .group_by(BankTransaction.category)
+            .order_by(func.sum(BankTransaction.amount).desc())
+            .all()
+        )
+
+        monthly_rows = (
+            db.session.query(
+                func.strftime("%Y-%m", BankTransaction.date).label("month"),
+                func.sum(BankTransaction.amount).label("total"),
+            )
+            .filter(
+                BankTransaction.amount > 0,
+                BankTransaction.pending == False,  # noqa: E712
+            )
+            .group_by("month")
+            .order_by("month")
+            .limit(12)
+            .all()
+        )
+
+        return jsonify(
+            {
+                "categories": [
+                    {"category": c or "Uncategorized", "total": round(float(t), 2)}
+                    for c, t in category_rows
+                ],
+                "monthly": [
+                    {"month": m, "total": round(float(t), 2)} for m, t in monthly_rows
+                ],
+            }
+        )
+
+    @app.delete("/api/items/<int:item_id>")
+    def remove_item(item_id: int):
+        item = db.get_or_404(PlaidItem, item_id)
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({"status": "ok"})
 
     return app
 
 
 app = create_app()
 
-
 if __name__ == "__main__":
     app.run(debug=True)
-

@@ -23,7 +23,6 @@ class PlaidError(Exception):
 class PlaidClient:
     _ENV_MAP = {
         "sandbox": plaid.Environment.Sandbox,
-        "development": plaid.Environment.Development,
         "production": plaid.Environment.Production,
     }
 
